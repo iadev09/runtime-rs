@@ -3,7 +3,13 @@ name = "runtime-rs"
 version = "0.1.0"
 edition = "2024"
 authors = ["iadev09 <iadev09@claviron.org>"]
-description = "Agnostic service composition primitives: typed registry, lifecycle hooks, runtime task orchestration, and graceful shutdown handles."
+description = "Typed service registry and Tokio lifecycle runtime for boot, reload, background tasks, and graceful shutdown."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/iadev09/runtime-rs"
+readme = "README.md"
+keywords = ["tokio", "runtime", "lifecycle", "registry"]
+categories = ["asynchronous"]
+exclude = ["/.gitea/**", "/Cargo.lock", "/justfile", "/rustfmt.toml"]
 
 [features]
 default = ["registry"]

@@ -331,3 +331,10 @@ tracing = "0.1"
 ```
 
 `dashmap` is only required by the default `events` feature.
+
+## License
+
+Licensed under either of:
+
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))

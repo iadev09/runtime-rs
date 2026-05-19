@@ -1,0 +1,17 @@
+/target
+/target-native
+/.env
+/.idea
+/.vscode
+/.venv
+*.log
+*.local
+*.swp
+*.swo
+*.swn
+.DS_Store
+/*.local
+*.env
+Cargo.lock
+*.md
+!README.md

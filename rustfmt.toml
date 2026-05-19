@@ -1,0 +1,34 @@
+# 🚀 General formatting rules for the nightly edition
+#
+# rustup run nightly cargo fmt
+#
+# 🚀 General settings
+edition = "2024"                # Rust 2024 edition
+max_width = 100                 # Maximum line width
+#use_small_heuristics = "Off"     # Try to keep small code blocks on a single line
+#use_small_heuristics = "Default"     # Try to keep small code blocks on a single line
+use_small_heuristics = "Max"     # Try to keep small code blocks on a single line
+hard_tabs = false               # Use tabs instead of spaces (false = spaces)
+tab_spaces = 4                  # One tab = 4 spaces
+
+# 📌 Functions and parameters
+fn_params_layout = "Vertical"  # Place each function parameter on a new line if the line is too long
+#where_single_line = false        # Do not force `where` clauses onto a single line
+# 🔗 Import ordering
+
+
+# 🎨 Code layout
+reorder_impl_items = false        # Keep the items inside `impl` blocks in their current order: False to keep traits impls in same order with trait
+trailing_comma = "Never"      # Trailing comma behavior
+force_explicit_abi = true        # Require an explicit ABI for external functions
+wrap_comments = false             # Do not wrap comments automatically to fit the line width
+
+# 🏗 Structs and enums
+struct_lit_width = 80            # Maximum width for struct literals
+struct_field_align_threshold = 0  # Alignment threshold for struct fields
+enum_discrim_align_threshold = 0  # Alignment threshold for enum discriminants
+
+#imports_granularity = "Crate"    # Group `use` statements at the crate level
+imports_granularity = "Module"
+group_imports = "StdExternalCrate"  # Group imports in a consistent order
+reorder_imports = true  # Sort imports alphabetically

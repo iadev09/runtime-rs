@@ -1,0 +1,20 @@
+name: ci
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  debian-trixie:
+    runs-on: debian-trixie
+    steps:
+      - uses: actions/checkout@v4
+      - run: uname -a
+      - run: rustc --version
+      - run: cargo --version
+      - run: cargo check --no-default-features
+      - run: cargo check
+      - run: cargo check --no-default-features --features full
+      - run: cargo check --examples
+      - run: cargo check --no-default-features --features full --examples
+      - run: cargo run --example minimal --features registry

@@ -1,0 +1,34 @@
+[package]
+name = "runtime-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Agnostic service composition primitives: typed registry, lifecycle hooks, runtime task orchestration, and graceful shutdown handles."
+
+[features]
+default = ["registry"]
+full = ["registry", "support", "events"]
+events = ["dep:dashmap"]
+registry = []
+support = []
+
+
+[dependencies]
+async-trait = "0.1"
+dashmap = { version = "6", optional = true }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tokio-util = "0.7"
+tracing = "0.1"
+
+[dev-dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+
+[[example]]
+name = "minimal"
+path = "examples/minimal.rs"
+required-features = ["registry"]
+
+[[example]]
+name = "axum"
+path = "examples/axum.rs"
+required-features = ["registry"]

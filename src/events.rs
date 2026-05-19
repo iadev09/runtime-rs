@@ -98,10 +98,10 @@ impl LifecycleBus {
         let key = TypeId::of::<E>();
         tracing::debug!(event_type = std::any::type_name::<E>(), "🔔 lifecycle event emit");
 
-        if let Some(entry) = self.channels.get(&key)
-            && let Some(sender) = entry.downcast_ref::<broadcast::Sender<E>>()
-        {
-            let _ = sender.send(event);
+        if let Some(entry) = self.channels.get(&key) {
+            if let Some(sender) = entry.downcast_ref::<broadcast::Sender<E>>() {
+                let _ = sender.send(event);
+            }
         }
         // No subscribers (or no channel registered) → drop silently.
     }
@@ -114,10 +114,10 @@ impl LifecycleBus {
     pub fn subscribe<E: LifecycleEvent>(&self) -> broadcast::Receiver<E> {
         let key = TypeId::of::<E>();
 
-        if let Some(entry) = self.channels.get(&key)
-            && let Some(sender) = entry.downcast_ref::<broadcast::Sender<E>>()
-        {
-            return sender.subscribe();
+        if let Some(entry) = self.channels.get(&key) {
+            if let Some(sender) = entry.downcast_ref::<broadcast::Sender<E>>() {
+                return sender.subscribe();
+            }
         }
 
         // Slow path: create the channel for this type. Race with

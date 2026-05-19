@@ -2,6 +2,7 @@
 name = "runtime-rs"
 version = "0.1.0"
 edition = "2024"
+authors = ["iadev09 <iadev09@claviron.org>"]
 description = "Agnostic service composition primitives: typed registry, lifecycle hooks, runtime task orchestration, and graceful shutdown handles."
 
 [features]

@@ -264,11 +264,11 @@ impl Drop for Permit {
         }
 
         // permit isn't dropped yet.
-        if let Some(max_count) = self.gate.inner.max_count
-            && count < max_count
-        {
-            // Notify waiters that a slot is available
-            self.gate.inner.released.notify_waiters();
+        if let Some(max_count) = self.gate.inner.max_count {
+            if count < max_count {
+                // Notify waiters that a slot is available
+                self.gate.inner.released.notify_waiters();
+            }
         }
     }
 }

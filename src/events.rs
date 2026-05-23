@@ -72,7 +72,7 @@ pub trait LifecycleEvent: Clone + Send + Sync + 'static {}
 #[derive(Clone)]
 pub struct LifecycleBus {
     channels: Arc<DashMap<TypeId, Box<dyn Any + Send + Sync>>>,
-    capacity: usize
+    capacity: usize,
 }
 
 impl LifecycleBus {
@@ -93,7 +93,7 @@ impl LifecycleBus {
     /// subscriber appears, future emits of `E` are delivered.
     pub fn emit<E: LifecycleEvent>(
         &self,
-        event: E
+        event: E,
     ) {
         let key = TypeId::of::<E>();
         tracing::debug!(event_type = std::any::type_name::<E>(), "🔔 lifecycle event emit");

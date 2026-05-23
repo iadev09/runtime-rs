@@ -17,7 +17,7 @@ struct Inner {
     shutdown: CancellationToken,
     registry: Registry<State>,
     #[cfg(feature = "events")]
-    events: LifecycleBus
+    events: LifecycleBus,
 }
 
 impl State {
@@ -26,7 +26,7 @@ impl State {
             shutdown: CancellationToken::new(),
             registry: Registry::default(),
             #[cfg(feature = "events")]
-            events: LifecycleBus::new()
+            events: LifecycleBus::new(),
         }))
     }
 }

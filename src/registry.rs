@@ -1,7 +1,5 @@
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
@@ -33,21 +31,21 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub enum Error {
     Boot {
         name: &'static str,
-        source: BoxError
+        source: BoxError,
     },
     Validate {
         name: &'static str,
-        source: BoxError
+        source: BoxError,
     },
     Reload {
         name: &'static str,
-        source: BoxError
+        source: BoxError,
     },
     /// Fatal runnable failure (default). The runtime tears the worker
     /// down so the supervisor can respawn cleanly.
     Run {
         name: &'static str,
-        source: BoxError
+        source: BoxError,
     },
     /// Recoverable runnable failure. The runtime logs and keeps the
     /// worker serving — used for best-effort tasks (e.g. notify
@@ -55,15 +53,15 @@ pub enum Error {
     /// configuration-driven failure shouldn't kill traffic.
     Recoverable {
         name: &'static str,
-        source: BoxError
+        source: BoxError,
     },
-    Other(BoxError)
+    Other(BoxError),
 }
 
 impl std::fmt::Display for Error {
     fn fmt(
         &self,
-        f: &mut std::fmt::Formatter<'_>
+        f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         match self {
             Error::Boot { name, source } => {
@@ -81,7 +79,7 @@ impl std::fmt::Display for Error {
             Error::Recoverable { name, source } => {
                 write!(f, "runnable '{name}' failed (recoverable): {source}")
             }
-            Error::Other(e) => std::fmt::Display::fmt(e, f)
+            Error::Other(e) => std::fmt::Display::fmt(e, f),
         }
     }
 }
@@ -94,7 +92,7 @@ impl std::fmt::Display for Error {
 
 impl<E> From<E> for Error
 where
-    E: std::error::Error + Send + Sync + 'static
+    E: std::error::Error + Send + Sync + 'static,
 {
     fn from(e: E) -> Self {
         Error::Other(Box::new(e))
@@ -109,7 +107,7 @@ impl Error {
         impl std::fmt::Display for MsgErr {
             fn fmt(
                 &self,
-                f: &mut std::fmt::Formatter<'_>
+                f: &mut std::fmt::Formatter<'_>,
             ) -> std::fmt::Result {
                 std::fmt::Display::fmt(&self.0, f)
             }
@@ -123,20 +121,20 @@ impl Error {
     /// attach lifecycle context to anonymous user errors.
     fn into_boot(
         self,
-        name: &'static str
+        name: &'static str,
     ) -> Self {
         match self {
             Error::Other(source) => Error::Boot { name, source },
-            other => other
+            other => other,
         }
     }
     fn into_validate(
         self,
-        name: &'static str
+        name: &'static str,
     ) -> Self {
         match self {
             Error::Other(source) => Error::Validate { name, source },
-            other => other
+            other => other,
         }
     }
     /// Used by `reload_one` (targeted, fail-fast). `reload_all` is broadcast
@@ -144,16 +142,16 @@ impl Error {
     /// cancel the rest, so that path just logs a warning.
     fn into_reload(
         self,
-        name: &'static str
+        name: &'static str,
     ) -> Self {
         match self {
             Error::Other(source) => Error::Reload { name, source },
-            other => other
+            other => other,
         }
     }
     fn into_run(
         self,
-        name: &'static str
+        name: &'static str,
     ) -> Self {
         match self {
             Error::Other(source) => Error::Run { name, source },
@@ -161,7 +159,7 @@ impl Error {
             // `Recoverable` with an empty `name`; `run_all` fills in the
             // provider name here so log lines stay attributed.
             Error::Recoverable { name: "", source } => Error::Recoverable { name, source },
-            other => other
+            other => other,
         }
     }
 
@@ -175,7 +173,7 @@ impl Error {
         impl std::fmt::Display for MsgErr {
             fn fmt(
                 &self,
-                f: &mut std::fmt::Formatter<'_>
+                f: &mut std::fmt::Formatter<'_>,
             ) -> std::fmt::Result {
                 std::fmt::Display::fmt(&self.0, f)
             }
@@ -191,13 +189,60 @@ impl Error {
 
 /// Shared lifecycle priority definitions for providers/reloadables.
 ///
-/// Lower values run earlier.
+/// Lower values run earlier among providers that are otherwise ready.
+/// Prefer `ProviderOrder` for real dependencies; priorities are only
+/// coarse tie-breakers for legacy/simple cases.
 pub mod priority {
+    /// Reserved floor for workspace-internal root providers.
+    ///
+    /// Ordinary providers should use `EARLY`, `NORMAL`, `LATE`, or explicit
+    /// `ProviderOrder` edges instead of depending on this extreme value.
+    #[doc(hidden)]
     pub const FIRST: u8 = 0;
     pub const EARLY: u8 = 50;
     pub const NORMAL: u8 = 100;
     pub const LATE: u8 = 150;
+    /// Reserved ceiling for final workspace-internal lifecycle providers.
+    ///
+    /// Other providers should use `LATE` plus explicit `ProviderOrder` edges
+    /// when they need to be late.
+    #[doc(hidden)]
     pub const LAST: u8 = u8::MAX;
+}
+
+/// Type-based lifecycle ordering hints.
+///
+/// Numeric priorities still provide a coarse tie-breaker. `ProviderOrder`
+/// adds explicit relationships between provider concrete types, so code can
+/// say "run me before `T`" without relying on magic numbers or provider names.
+#[derive(Clone, Debug, Default)]
+pub struct ProviderOrder {
+    before: Vec<TypeId>,
+    after: Vec<TypeId>,
+}
+
+impl ProviderOrder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn before<T: 'static>(mut self) -> Self {
+        self.before.push(TypeId::of::<T>());
+        self
+    }
+
+    pub fn after<T: 'static>(mut self) -> Self {
+        self.after.push(TypeId::of::<T>());
+        self
+    }
+
+    pub fn before_types(&self) -> &[TypeId] {
+        &self.before
+    }
+
+    pub fn after_types(&self) -> &[TypeId] {
+        &self.after
+    }
 }
 
 #[async_trait]
@@ -217,7 +262,9 @@ pub trait ReloadState: Send + Sync + Sized + 'static {
 pub trait Reloadable<S>: Send + Sync + 'static {
     /// Optional reload priority.
     ///
-    /// Lower values run earlier. `None` means `priority::NORMAL`.
+    /// Lower values run earlier among otherwise-ready providers. `None`
+    /// means `priority::NORMAL`. Prefer `Provider::order()` for real
+    /// dependency relationships.
     fn priority(&self) -> Option<u8> {
         None
     }
@@ -226,12 +273,9 @@ pub trait Reloadable<S>: Send + Sync + 'static {
     /// Implementations may spawn async work internally if needed.
     async fn reload(
         &self,
-        state: &S
+        state: &S,
     ) -> Result<()>;
 }
-
-/// Boxed future type returned by long-running providers (server loops/background workers).
-pub type TaskFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 
 /// Capability trait for providers that produce a long-running runtime task.
 ///
@@ -241,12 +285,13 @@ pub type TaskFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>
 ///
 /// Config-driven gating: if the provider is disabled at runtime (e.g.
 /// an `enabled: false` config flag, or a single-instance service whose
-/// pinned `worker_id` doesn't match this worker), the future returned
-/// here MUST short-circuit and return `Ok(())` immediately instead of
-/// starting the long task. The provider stays registered for downstream
-/// capability lookups; it just doesn't run on this process.
+/// pinned `worker_id` doesn't match this worker), this method MUST
+/// short-circuit and return `Ok(())` immediately instead of starting the
+/// long task. The provider stays registered for downstream capability
+/// lookups; it just doesn't run on this process.
+#[async_trait]
 pub trait Runnable<S>: Send + Sync + 'static {
-    /// Build the task future to be spawned by the bootstrap/supervisor layer.
+    /// Run the long-lived provider task spawned by the bootstrap/supervisor layer.
     ///
     /// NOTICE (convention):
     /// If this future returns `Err`, implementation should log contextual
@@ -257,10 +302,10 @@ pub trait Runnable<S>: Send + Sync + 'static {
     /// - Runtime cannot reliably attach provider-specific business context.
     /// - Non-critical runnable errors are not centrally logged to avoid
     ///   duplicate/no-context error lines.
-    fn run(
-        &self,
-        state: S
-    ) -> TaskFuture;
+    async fn run(
+        self: Arc<Self>,
+        state: S,
+    ) -> Result<()>;
 }
 
 /// Any service that can be registered in the DI registry.
@@ -283,13 +328,14 @@ pub trait Runnable<S>: Send + Sync + 'static {
 ///
 ///    Forbidden:
 ///    * Resolving other providers from the registry (they may not exist
-///      yet; ordering is settled by `boot_priority`, not by register order).
+///      yet; ordering is settled by `Provider::order()` and coarse
+///      priority, not by register order).
 ///    * Async I/O.
 ///    * Spawning tasks.
 ///    * Building the operational snapshot (that's `boot()`).
 ///
 /// 2. **`boot()`** — async, called after every `register()` ran, in
-///    `boot_priority` order. This is where the provider becomes usable.
+///    lifecycle order. This is where the provider becomes usable.
 ///
 ///    Allowed / expected:
 ///    * Resolve dependencies from the registry — by now every other
@@ -322,10 +368,9 @@ pub trait Provider<S>: Any + Send + Sync + 'static {
         "provider"
     }
 
-    /// Optional boot priority. Lower values run earlier. `None` means
-    /// `priority::NORMAL`. Use `priority::FIRST` for providers others
-    /// depend on (e.g. `HttpService` publishing the parsed `http.yaml`),
-    /// `priority::AFTER` / `priority::LATE` for consumers.
+    /// Optional boot priority. Lower values run earlier among otherwise-ready
+    /// providers. `None` means `priority::NORMAL`. Prefer `Provider::order()`
+    /// for dependency relationships; priority is only a coarse tie-breaker.
     fn boot_priority(&self) -> Option<u8> {
         None
     }
@@ -336,13 +381,23 @@ pub trait Provider<S>: Any + Send + Sync + 'static {
         None
     }
 
+    /// Optional type-based boot/reload ordering hints.
+    ///
+    /// The registry builds one ordered lifecycle plan and uses it for boot,
+    /// validate, shutdown, and reload. Reload skips providers that are not
+    /// `Reloadable`, but dependency relationships remain the same: reload is
+    /// a boot emulation on a live process.
+    fn order(&self) -> ProviderOrder {
+        ProviderOrder::default()
+    }
+
     /// Bootstrap-time async initialization. See the trait-level lifecycle
     /// convention for what belongs here vs in `register()` / `run()`.
     /// Default no-op so providers that only need `register()` insertion
     /// don't have to implement this.
     async fn boot(
         &self,
-        _state: &S
+        _state: &S,
     ) -> Result<()> {
         Ok(())
     }
@@ -355,21 +410,17 @@ pub trait Provider<S>: Any + Send + Sync + 'static {
     /// should be idempotent because shutdown paths may be re-entered.
     async fn shutdown(
         &self,
-        _state: &S
+        _state: &S,
     ) -> Result<()> {
         Ok(())
     }
 
-    /// Synchronous preflight validation.
-    ///
-    /// Call this before spawning runnable providers so bad config, missing
-    /// files, or conflicting settings fail fast before long-running work
-    /// starts. Applications may choose whether validation happens before or
-    /// after `boot_all`, depending on whether a provider needs boot-time state
-    /// to validate itself.
+    /// Synchronous preflight validation. Runs in the config-check / startup
+    /// validation phase before any `boot()` to fail fast on bad config
+    /// (missing files, conflicting settings) without touching the registry.
     fn validate(
         &self,
-        _state: &S
+        _state: &S,
     ) -> Result<()> {
         Ok(())
     }
@@ -377,7 +428,7 @@ pub trait Provider<S>: Any + Send + Sync + 'static {
     /// Downcast hook for typed resolve APIs.
     fn as_any(&self) -> &dyn Any
     where
-        Self: Sized
+        Self: Sized,
     {
         self
     }
@@ -388,7 +439,7 @@ pub trait Provider<S>: Any + Send + Sync + 'static {
     }
 
     /// Optional capability hook.
-    fn as_runnable(&self) -> Option<&dyn Runnable<S>> {
+    fn as_runnable(self: Arc<Self>) -> Option<Arc<dyn Runnable<S>>> {
         None
     }
 }
@@ -399,13 +450,20 @@ pub trait Provider<S>: Any + Send + Sync + 'static {
 /// lookup only holds a short-lived read lock long enough to clone the stored `Arc`.
 pub struct Registry<S> {
     providers: RwLock<HashMap<TypeId, Arc<dyn Provider<S>>>>,
-    by_type: RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>
+    by_type: RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
+    registration_order: RwLock<Vec<TypeId>>,
+    lifecycle_order: RwLock<Option<Vec<TypeId>>>,
 }
 
 impl<S: 'static> Registry<S> {
     /// Create the service with an empty registry. You can register later.
     pub fn new() -> Self {
-        Self { providers: RwLock::new(HashMap::new()), by_type: RwLock::new(HashMap::new()) }
+        Self {
+            providers: RwLock::new(HashMap::new()),
+            by_type: RwLock::new(HashMap::new()),
+            registration_order: RwLock::new(Vec::new()),
+            lifecycle_order: RwLock::new(None),
+        }
     }
 
     /// Register a provider into the registry.
@@ -426,10 +484,10 @@ impl<S: 'static> Registry<S> {
     /// ```
     pub fn insert<C>(
         &self,
-        item: Arc<C>
+        item: Arc<C>,
     ) -> &Self
     where
-        C: Provider<S> + 'static
+        C: Provider<S> + 'static,
     {
         let type_id = TypeId::of::<C>();
         let any: Arc<dyn Any + Send + Sync> = item.clone();
@@ -446,16 +504,18 @@ impl<S: 'static> Registry<S> {
 
         let it: Arc<dyn Provider<S>> = item;
         self.providers.write().expect("registry providers lock poisoned").insert(type_id, it);
+        self.registration_order.write().expect("registry order lock poisoned").push(type_id);
+        *self.lifecycle_order.write().expect("registry lifecycle order lock poisoned") = None;
         self
     }
 
     /// Execute a closure with a concrete typed reference `&T` if the service is registered.
     pub fn with_typed<T, R>(
         &self,
-        f: impl FnOnce(&T) -> R
+        f: impl FnOnce(&T) -> R,
     ) -> Option<R>
     where
-        T: Provider<S> + 'static
+        T: Provider<S> + 'static,
     {
         let typed = self.resolve::<T>()?;
         Some(f(typed.as_ref()))
@@ -471,7 +531,7 @@ impl<S: 'static> Registry<S> {
     /// Returns `None` if the type is not registered.
     pub fn resolve<T>(&self) -> Option<Arc<T>>
     where
-        T: Provider<S> + 'static
+        T: Provider<S> + 'static,
     {
         let any = self
             .by_type
@@ -488,10 +548,72 @@ impl<S: 'static> Registry<S> {
         self.providers.read().expect("registry providers lock poisoned").values().cloned().collect()
     }
 
+    fn provider_entries_snapshot(&self) -> Vec<ProviderEntry<S>> {
+        let providers = self.providers.read().expect("registry providers lock poisoned");
+        self.registration_order
+            .read()
+            .expect("registry order lock poisoned")
+            .iter()
+            .enumerate()
+            .filter_map(|(index, type_id)| {
+                providers.get(type_id).cloned().map(|provider| ProviderEntry {
+                    type_id: *type_id,
+                    index,
+                    provider,
+                })
+            })
+            .collect()
+    }
+
+    /// Return the cached lifecycle plan, building it once if needed.
+    ///
+    /// The plan is invalidated on `insert()`. Normal lifecycle phases reuse
+    /// the same known list, so reload is a boot emulation over the same
+    /// provider order instead of a second ordering universe.
+    fn lifecycle_plan(&self) -> Result<Vec<Arc<dyn Provider<S>>>> {
+        if let Some(type_ids) = self
+            .lifecycle_order
+            .read()
+            .expect("registry lifecycle order lock poisoned")
+            .as_ref()
+            .cloned()
+        {
+            return Ok(self.providers_from_type_ids(&type_ids));
+        }
+
+        let ordered = order_provider_entries(self.provider_entries_snapshot())?;
+        let type_ids = ordered.iter().map(|entry| entry.type_id).collect::<Vec<_>>();
+        let providers = ordered.iter().map(|entry| entry.provider.clone()).collect::<Vec<_>>();
+        #[cfg(debug_assertions)]
+        tracing::debug!(
+            providers = ?providers.iter().map(|provider| provider.name()).collect::<Vec<_>>(),
+            "provider lifecycle order"
+        );
+        *self.lifecycle_order.write().expect("registry lifecycle order lock poisoned") =
+            Some(type_ids);
+        Ok(providers)
+    }
+
+    fn providers_from_type_ids(
+        &self,
+        type_ids: &[TypeId],
+    ) -> Vec<Arc<dyn Provider<S>>> {
+        let providers = self.providers.read().expect("registry providers lock poisoned");
+        type_ids.iter().filter_map(|type_id| providers.get(type_id).cloned()).collect()
+    }
+
     /// Return the list of provider display names (for diagnostics only).
     #[allow(unused)]
     pub fn list_names(&self) -> Vec<&'static str> {
         self.providers().iter().map(|c| c.name()).collect()
+    }
+
+    /// Return provider display names in lifecycle order.
+    ///
+    /// This is useful for diagnostics and startup logging before running
+    /// `boot_all()`.
+    pub fn lifecycle_names(&self) -> Result<Vec<&'static str>> {
+        Ok(self.lifecycle_plan()?.iter().map(|provider| provider.name()).collect())
     }
 
     /// Spawn all runnable providers into the given JoinSet.
@@ -500,10 +622,10 @@ impl<S: 'static> Registry<S> {
     pub fn run_all(
         &self,
         state: S,
-        join_set: &mut tokio::task::JoinSet<Result<()>>
+        join_set: &mut tokio::task::JoinSet<Result<()>>,
     ) -> usize
     where
-        S: Clone + Send + 'static
+        S: Clone + Send + 'static,
     {
         let mut spawned = 0usize;
         let mut providers = self.providers();
@@ -512,15 +634,14 @@ impl<S: 'static> Registry<S> {
         });
 
         for provider in providers {
-            let Some(runnable) = provider.as_runnable() else {
-                continue;
-            };
+            let Some(runnable) = provider.clone().as_runnable() else { continue };
 
             let name = provider.name();
-            let fut = runnable
-                .run(state.clone())
-                .instrument(tracing::debug_span!("provider", provider = %name));
-            join_set.spawn(async move { fut.await.map_err(|e| e.into_run(name)) });
+            let state = state.clone();
+            join_set.spawn(
+                async move { runnable.run(state).await.map_err(|e| e.into_run(name)) }
+                    .instrument(tracing::debug_span!("provider", provider = %name)),
+            );
             spawned += 1;
         }
 
@@ -530,9 +651,9 @@ impl<S: 'static> Registry<S> {
     /// Run `validate` hook for all registered providers.
     pub fn validate_all(
         &self,
-        state: &S
+        state: &S,
     ) -> Result<()> {
-        for provider in self.providers() {
+        for provider in self.lifecycle_plan()? {
             let name = provider.name();
             provider.validate(state).map_err(|e| e.into_validate(name))?;
         }
@@ -541,14 +662,9 @@ impl<S: 'static> Registry<S> {
 
     pub async fn boot_all(
         &self,
-        state: &S
+        state: &S,
     ) -> Result<()> {
-        let mut providers = self.providers();
-        providers.sort_by_key(|provider| {
-            (provider.boot_priority().unwrap_or(priority::NORMAL), provider.name())
-        });
-
-        for provider in providers {
+        for provider in self.lifecycle_plan()? {
             let name = provider.name();
             // debug!("🚀 booting provider '{}'", name);
             if let Err(e) = provider.boot(state).await {
@@ -562,12 +678,9 @@ impl<S: 'static> Registry<S> {
 
     pub async fn shutdown_all(
         &self,
-        state: &S
+        state: &S,
     ) -> Result<()> {
-        let mut providers = self.providers();
-        providers.sort_by_key(|provider| {
-            (provider.boot_priority().unwrap_or(priority::NORMAL), provider.name())
-        });
+        let mut providers = self.lifecycle_plan()?;
         providers.reverse();
 
         for provider in providers {
@@ -582,7 +695,7 @@ impl<S: 'static> Registry<S> {
     pub async fn reload_one(
         &self,
         name: &str,
-        state: &S
+        state: &S,
     ) -> Result<()> {
         let Some(provider) = self.providers().into_iter().find(|provider| provider.name() == name)
         else {
@@ -618,29 +731,18 @@ impl<S: 'static> Registry<S> {
 
 impl<S> Registry<S>
 where
-    S: ReloadState + 'static
+    S: ReloadState + 'static,
 {
     pub async fn reload_all(
         &self,
-        state: &S
+        state: &S,
     ) -> Result<()> {
         state.reload().await?;
 
         info!("✅ state reloaded");
 
-        let mut list: Vec<(u8, &'static str, Arc<dyn Provider<S>>)> = self
-            .providers()
-            .into_iter()
-            .filter_map(|provider| {
-                let reloadable = provider.as_reloadable()?;
-                Some((reloadable.priority().unwrap_or(priority::NORMAL), provider.name(), provider))
-            })
-            .collect();
-
-        // deterministic order: priority first, name second.
-        list.sort_by_key(|(priority, name, _)| (*priority, *name));
-
-        for (_, name, provider) in list {
+        for provider in self.lifecycle_plan()? {
+            let name = provider.name();
             if let Some(reloadable) = provider.as_reloadable() {
                 if let Err(e) = reloadable.reload(state).await {
                     warn!("❌ reload of {} failed: {e}", name);
@@ -654,8 +756,215 @@ where
     }
 }
 
+struct ProviderEntry<S> {
+    type_id: TypeId,
+    index: usize,
+    provider: Arc<dyn Provider<S>>,
+}
+
+impl<S> Clone for ProviderEntry<S> {
+    fn clone(&self) -> Self {
+        Self { type_id: self.type_id, index: self.index, provider: self.provider.clone() }
+    }
+}
+
+fn order_provider_entries<S: 'static>(
+    entries: Vec<ProviderEntry<S>>
+) -> Result<Vec<ProviderEntry<S>>> {
+    let len = entries.len();
+    let positions: HashMap<TypeId, usize> =
+        entries.iter().enumerate().map(|(idx, entry)| (entry.type_id, idx)).collect();
+    let priorities: Vec<u8> =
+        entries.iter().map(|entry| lifecycle_priority(&entry.provider)).collect();
+    let mut outgoing: Vec<HashSet<usize>> = (0..len).map(|_| HashSet::new()).collect();
+    let mut indegree = vec![0usize; len];
+
+    let mut add_edge = |from: usize, to: usize| {
+        if from != to && outgoing[from].insert(to) {
+            indegree[to] += 1;
+        }
+    };
+
+    for (idx, entry) in entries.iter().enumerate() {
+        let order = entry.provider.order();
+        for target in order.before_types() {
+            if let Some(&target_idx) = positions.get(target) {
+                add_edge(idx, target_idx);
+            }
+        }
+        for target in order.after_types() {
+            if let Some(&target_idx) = positions.get(target) {
+                add_edge(target_idx, idx);
+            }
+        }
+    }
+
+    let mut ready: Vec<usize> = indegree
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, degree)| (*degree == 0).then_some(idx))
+        .collect();
+    let mut ordered = Vec::with_capacity(len);
+
+    while !ready.is_empty() {
+        ready.sort_by_key(|idx| {
+            (priorities[*idx], entries[*idx].index, entries[*idx].provider.name())
+        });
+        let idx = ready.remove(0);
+        ordered.push(idx);
+
+        let next: Vec<_> = outgoing[idx].iter().copied().collect();
+        for target in next {
+            indegree[target] -= 1;
+            if indegree[target] == 0 {
+                ready.push(target);
+            }
+        }
+    }
+
+    if ordered.len() != len {
+        let blocked = indegree
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, degree)| (*degree > 0).then_some(entries[idx].provider.name()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(Error::msg(format!("provider lifecycle order cycle detected: {blocked}")));
+    }
+
+    Ok(ordered.into_iter().map(|idx| entries[idx].clone()).collect())
+}
+
+fn lifecycle_priority<S: 'static>(provider: &Arc<dyn Provider<S>>) -> u8 {
+    provider
+        .boot_priority()
+        .or_else(|| provider.as_reloadable().and_then(|reloadable| reloadable.priority()))
+        .unwrap_or(priority::NORMAL)
+}
+
 impl<S: 'static> Default for Registry<S> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct TestState {
+        seen: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    struct DbProvider;
+    struct CacheProvider;
+    struct ApiProvider;
+
+    #[async_trait]
+    impl Provider<TestState> for DbProvider {
+        fn name(&self) -> &'static str {
+            "db"
+        }
+
+        fn validate(
+            &self,
+            state: &TestState,
+        ) -> Result<()> {
+            state.seen.lock().expect("test log poisoned").push("db");
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Provider<TestState> for CacheProvider {
+        fn name(&self) -> &'static str {
+            "cache"
+        }
+
+        fn order(&self) -> ProviderOrder {
+            ProviderOrder::new().after::<DbProvider>()
+        }
+
+        fn validate(
+            &self,
+            state: &TestState,
+        ) -> Result<()> {
+            state.seen.lock().expect("test log poisoned").push("cache");
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Provider<TestState> for ApiProvider {
+        fn name(&self) -> &'static str {
+            "api"
+        }
+
+        fn order(&self) -> ProviderOrder {
+            ProviderOrder::new().after::<CacheProvider>()
+        }
+
+        fn validate(
+            &self,
+            state: &TestState,
+        ) -> Result<()> {
+            state.seen.lock().expect("test log poisoned").push("api");
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn lifecycle_order_uses_type_dependencies() {
+        let state = TestState::default();
+        let registry = Registry::<TestState>::new();
+
+        registry
+            .insert(Arc::new(ApiProvider))
+            .insert(Arc::new(CacheProvider))
+            .insert(Arc::new(DbProvider));
+
+        registry.validate_all(&state).expect("validation should succeed");
+
+        let seen = state.seen.lock().expect("test log poisoned").clone();
+        assert_eq!(seen, vec!["db", "cache", "api"]);
+    }
+
+    struct CycleA;
+    struct CycleB;
+
+    #[async_trait]
+    impl Provider<TestState> for CycleA {
+        fn name(&self) -> &'static str {
+            "cycle-a"
+        }
+
+        fn order(&self) -> ProviderOrder {
+            ProviderOrder::new().after::<CycleB>()
+        }
+    }
+
+    #[async_trait]
+    impl Provider<TestState> for CycleB {
+        fn name(&self) -> &'static str {
+            "cycle-b"
+        }
+
+        fn order(&self) -> ProviderOrder {
+            ProviderOrder::new().after::<CycleA>()
+        }
+    }
+
+    #[test]
+    fn lifecycle_order_rejects_cycles() {
+        let state = TestState::default();
+        let registry = Registry::<TestState>::new();
+
+        registry.insert(Arc::new(CycleA)).insert(Arc::new(CycleB));
+
+        let err = registry.validate_all(&state).expect_err("cycle must be rejected");
+        assert!(err.to_string().contains("provider lifecycle order cycle detected"));
     }
 }

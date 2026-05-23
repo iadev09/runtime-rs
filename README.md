@@ -7,10 +7,10 @@ reload them, run their background tasks, resolve them by Rust type, and shut
 them down gracefully:
 
 - register typed services once
-- boot / validate / reload / shutdown them in deterministic order
+- boot / validate / reload / shutdown them in deterministic dependency order
 - resolve them later by concrete Rust type
 - remove the need for ad-hoc runtime injection
-- spawn long-running runnable providers
+- spawn long-running async runnable providers
 - drain accepted work through graceful shutdown gates
 - publish typed in-process lifecycle events with the `events` feature
 
@@ -176,30 +176,80 @@ impl Provider<AppState> for DbService {
 }
 ```
 
-Lifecycle order is deterministic. Providers can override `boot_priority()` and
-`run_priority()` when ordering matters.
+## Lifecycle Ordering
+
+Lifecycle order is deterministic and type-aware. Providers can express concrete
+dependencies with `ProviderOrder::before::<T>()` / `ProviderOrder::after::<T>()`
+instead of relying on registration order or magic priority numbers.
+
+The same lifecycle plan is used for:
+
+- `validate_all`
+- `boot_all`
+- `reload_all`
+- `shutdown_all`, in reverse order
+
+Reload skips providers that are not `Reloadable`, but it keeps the same relative
+dependency order as boot. If a dependency cycle is introduced, the registry
+returns an error before running the lifecycle phase.
+
+```rust
+use runtime_rs::{Provider, ProviderOrder};
+
+pub struct DbService;
+pub struct CacheService;
+
+impl Provider<AppState> for CacheService {
+    fn order(&self) -> ProviderOrder {
+        ProviderOrder::new().after::<DbService>()
+    }
+}
+```
+
+Registration order can now stay ergonomic:
+
+```rust
+use std::sync::Arc;
+
+state.registry_ref().insert(Arc::new(CacheService));
+state.registry_ref().insert(Arc::new(DbService));
+
+let names = state.registry_ref().lifecycle_names()?;
+println!("Lifecycle order: {}", names.join(" -> "));
+
+state.registry_ref().boot_all(&state).await?;
+// DbService boots before CacheService because CacheService says:
+// ProviderOrder::new().after::<DbService>()
+```
+
+`boot_priority()` and `Reloadable::priority()` are still available as coarse
+tie-breakers among otherwise-ready providers. Prefer `ProviderOrder` for real
+dependencies. `run_priority()` controls only runtime task spawn order.
 
 ## Runnable Providers
 
 Long-running loops live in `Runnable::run()`, not in `boot()`.
+`Runnable::run()` is an async trait method and receives `self: Arc<Self>`, so
+providers can be spawned without returning a boxed task future.
 
 ```rust
-use runtime_rs::{Provider, Runnable};
+use std::sync::Arc;
+use async_trait::async_trait;
+use runtime_rs::{Provider, Result, Runnable};
 
+#[async_trait]
 impl Runnable<AppState> for CacheService {
-    fn run(
-        &self,
+    async fn run(
+        self: Arc<Self>,
         state: AppState
-    ) -> runtime_rs::registry::TaskFuture {
-        Box::pin(async move {
-            state.on_shutdown().await;
-            Ok(())
-        })
+    ) -> Result<()> {
+        state.on_shutdown().await;
+        Ok(())
     }
 }
 
 impl Provider<AppState> for CacheService {
-    fn as_runnable(&self) -> Option<&dyn Runnable<AppState>> {
+    fn as_runnable(self: Arc<Self>) -> Option<Arc<dyn Runnable<AppState>>> {
         Some(self)
     }
 }
@@ -249,6 +299,10 @@ impl Provider<AppState> for DbService {
 Use `registry.reload_one("db", &state).await` for targeted reloads or
 `registry.reload_all(&state).await` for full reloads.
 
+`reload_all` first calls `ReloadState::reload()` on your state, then walks the
+same lifecycle order used by `boot_all` and calls `Reloadable::reload()` on
+reloadable providers.
+
 ## Gates
 
 The `support` feature enables optional runtime support tools. They are not
@@ -256,7 +310,7 @@ required by `Registry` or `Runtime`, but they are useful when implementing
 servers, connection loops, and request handlers.
 
 `Gate` is a graceful shutdown admission/drain tool. It is inspired by axum's
-server handle pattern, but lifted out of HTTP.
+server graceful-shutdown pattern, but lifted out of HTTP.
 
 It can:
 
@@ -314,6 +368,12 @@ cargo run --example minimal --features registry
 cargo run --example axum --features registry
 ```
 
+`examples/minimal.rs` demonstrates type-based boot order by registering
+`IdleService` before `DbProvider` while `DbProvider` declares
+`ProviderOrder::new().before::<IdleService>()`; the example prints
+`Planned boot order: db -> idle -> control` before boot starts, then
+`Boot order: db -> idle -> control` after boot completes.
+
 `axum` is a dev-dependency only. It is there to show integration style; it is
 not part of `runtime-rs` for library users.
 
@@ -330,7 +390,7 @@ tokio-util = "0.7"
 tracing = "0.1"
 ```
 
-`dashmap` is only required by the default `events` feature.
+`dashmap` is only required when the `events` feature is enabled.
 
 ## License
 

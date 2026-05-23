@@ -1,6 +1,6 @@
 [package]
 name = "runtime-rs"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2024"
 authors = ["iadev09 <iadev09@claviron.org>"]
 description = "Typed service registry and Tokio lifecycle runtime for boot, reload, background tasks, and graceful shutdown."

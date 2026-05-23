@@ -1,12 +1,13 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 #[cfg(feature = "events")]
 use runtime_rs::LifecycleBus;
 use runtime_rs::{
-    Error, Provider, Registry, ReloadState, Reloadable, Result, Runnable, Runtime, SharedState
+    Error, Provider, ProviderOrder, Registry, ReloadState, Reloadable, Result, Runnable, Runtime,
+    SharedState,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -17,8 +18,9 @@ struct Inner {
     shutdown: CancellationToken,
     registry: Registry<State>,
     demo_interval_ms: AtomicU64,
+    boot_order: Mutex<Vec<&'static str>>,
     #[cfg(feature = "events")]
-    events: LifecycleBus
+    events: LifecycleBus,
 }
 
 impl Default for State {
@@ -27,8 +29,9 @@ impl Default for State {
             shutdown: CancellationToken::new(),
             registry: Registry::default(),
             demo_interval_ms: AtomicU64::new(1_000),
+            boot_order: Mutex::new(Vec::new()),
             #[cfg(feature = "events")]
-            events: LifecycleBus::new()
+            events: LifecycleBus::new(),
         }))
     }
 }
@@ -48,6 +51,22 @@ impl State {
 
     fn speed_up_demo(&self) {
         self.0.demo_interval_ms.store(300, Ordering::Relaxed);
+    }
+
+    fn mark_booted(
+        &self,
+        name: &'static str,
+    ) {
+        self.0.boot_order.lock().expect("boot order lock poisoned").push(name);
+    }
+
+    fn assert_boot_order(
+        &self,
+        expected: &[&'static str],
+    ) {
+        let actual = self.0.boot_order.lock().expect("boot order lock poisoned").clone();
+        assert_eq!(actual, expected);
+        println!("Boot order: {}", actual.join(" -> "));
     }
 }
 
@@ -88,15 +107,16 @@ impl Provider<State> for IdleService {
 
     async fn boot(
         &self,
-        _state: &State
+        state: &State,
     ) -> Result<()> {
+        state.mark_booted(self.name());
         println!("Idle Service booted");
         Ok(())
     }
 
     fn validate(
         &self,
-        _state: &State
+        _state: &State,
     ) -> Result<()> {
         println!("Idle Service validated");
         Ok(())
@@ -106,17 +126,18 @@ impl Provider<State> for IdleService {
         Some(self)
     }
 
-    fn as_runnable(&self) -> Option<&dyn Runnable<State>> {
+    fn as_runnable(self: Arc<Self>) -> Option<Arc<dyn Runnable<State>>> {
         Some(self)
     }
 }
 
+#[async_trait]
 impl Runnable<State> for IdleService {
-    fn run(
-        &self,
-        state: State
-    ) -> runtime_rs::registry::TaskFuture {
-        Box::pin(start_service(state))
+    async fn run(
+        self: Arc<Self>,
+        state: State,
+    ) -> Result<()> {
+        start_service(state).await
     }
 }
 
@@ -124,7 +145,7 @@ impl Runnable<State> for IdleService {
 impl Reloadable<State> for IdleService {
     async fn reload(
         &self,
-        state: &State
+        state: &State,
     ) -> Result<()> {
         state.speed_up_demo();
         println!("Idle Service reloaded; interval is now 300ms");
@@ -140,31 +161,37 @@ impl Provider<State> for DbProvider {
 
     async fn boot(
         &self,
-        _state: &State
+        state: &State,
     ) -> Result<()> {
+        state.mark_booted(self.name());
         println!("DB provider booted");
         Ok(())
     }
 
+    fn order(&self) -> ProviderOrder {
+        ProviderOrder::new().before::<IdleService>()
+    }
+
     fn validate(
         &self,
-        _state: &State
+        _state: &State,
     ) -> Result<()> {
         println!("DB provider validated");
         Ok(())
     }
 
-    fn as_runnable(&self) -> Option<&dyn Runnable<State>> {
+    fn as_runnable(self: Arc<Self>) -> Option<Arc<dyn Runnable<State>>> {
         Some(self)
     }
 }
 
+#[async_trait]
 impl Runnable<State> for DbProvider {
-    fn run(
-        &self,
-        state: State
-    ) -> runtime_rs::registry::TaskFuture {
-        Box::pin(run_db_probe(state))
+    async fn run(
+        self: Arc<Self>,
+        state: State,
+    ) -> Result<()> {
+        run_db_probe(state).await
     }
 }
 
@@ -176,31 +203,33 @@ impl Provider<State> for ControlProvider {
 
     async fn boot(
         &self,
-        _state: &State
+        state: &State,
     ) -> Result<()> {
+        state.mark_booted(self.name());
         println!("Control provider booted; it will send reload and then shut down");
         Ok(())
     }
 
     fn validate(
         &self,
-        _state: &State
+        _state: &State,
     ) -> Result<()> {
         println!("Control provider validated");
         Ok(())
     }
 
-    fn as_runnable(&self) -> Option<&dyn Runnable<State>> {
+    fn as_runnable(self: Arc<Self>) -> Option<Arc<dyn Runnable<State>>> {
         Some(self)
     }
 }
 
+#[async_trait]
 impl Runnable<State> for ControlProvider {
-    fn run(
-        &self,
-        state: State
-    ) -> runtime_rs::registry::TaskFuture {
-        Box::pin(run_control_provider(state))
+    async fn run(
+        self: Arc<Self>,
+        state: State,
+    ) -> Result<()> {
+        run_control_provider(state).await
     }
 }
 
@@ -248,7 +277,9 @@ async fn main() -> Result<()> {
     state.registry_ref().insert(Arc::new(IdleService));
     state.registry_ref().insert(Arc::new(DbProvider));
     state.registry_ref().insert(Arc::new(ControlProvider));
+    println!("Planned boot order: {}", state.registry_ref().lifecycle_names()?.join(" -> "));
     state.registry_ref().boot_all(&state).await?;
+    state.assert_boot_order(&["db", "idle", "control"]);
     state.registry_ref().validate_all(&state)?;
 
     let provider = state.registry_ref().resolve::<IdleService>().expect("IdleProvider registered");

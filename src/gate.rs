@@ -20,7 +20,7 @@ const NANOS_NONE: u64 = u64::MAX;
 
 #[derive(Clone, Debug)]
 pub struct Gate {
-    inner: Arc<Inner>
+    inner: Arc<Inner>,
 }
 
 #[derive(Debug)]
@@ -34,14 +34,14 @@ struct Inner {
     grace_period_nanos: AtomicU64,
     /// Timeout for acquiring connection slot when at max_connections (during normal operation)
     acquire_timeout: Duration,
-    max_count: Option<usize>
+    max_count: Option<usize>,
 }
 
 #[derive(Debug)]
 pub enum Error {
     ShuttingDown, // GracefulShutdown(Duration),
     AcquireTimeout(Duration),
-    AtCapacity
+    AtCapacity,
 }
 
 impl Gate {
@@ -51,7 +51,7 @@ impl Gate {
     /// - `acquire_timeout`: How long to wait for a slot when at capacity
     pub fn new(
         max_count: Option<usize>,
-        acquire_timeout: Duration
+        acquire_timeout: Duration,
     ) -> Self {
         let inner = Inner {
             graceful: NotifyOnce::default(),
@@ -61,7 +61,7 @@ impl Gate {
             all_done: NotifyOnce::default(),
             grace_period_nanos: AtomicU64::new(NANOS_NONE),
             acquire_timeout,
-            max_count
+            max_count,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -75,7 +75,7 @@ impl Gate {
     pub fn grace_period(&self) -> Option<Duration> {
         match self.inner.grace_period_nanos.load(Ordering::Acquire) {
             NANOS_NONE => None,
-            nanos => Some(Duration::from_nanos(nanos))
+            nanos => Some(Duration::from_nanos(nanos)),
         }
     }
 
@@ -98,7 +98,7 @@ impl Gate {
     /// Lock-free write using atomic operation.
     pub fn graceful_shutdown(
         &self,
-        duration: Option<Duration>
+        duration: Option<Duration>,
     ) {
         let nanos = duration.map_or(NANOS_NONE, |d| d.as_nanos() as u64);
         self.inner.grace_period_nanos.store(nanos, Ordering::Release);
@@ -225,13 +225,13 @@ impl Gate {
                     debug!("🍺 All connections finished before graceful timeout");
                 },
             },
-            None => self.inner.all_done.notified().await
+            None => self.inner.all_done.notified().await,
         }
     }
 }
 
 pub struct Permit {
-    gate: Gate
+    gate: Gate,
 }
 
 #[allow(unused)]
@@ -284,7 +284,7 @@ pub fn create_gate(
     token: CancellationToken,
     graceful_timeout: Option<Duration>,
     max_count: Option<usize>,
-    acquire_timeout: Duration
+    acquire_timeout: Duration,
 ) -> Gate {
     let gate = Gate::new(max_count, acquire_timeout);
     let shutdown_gate = gate.clone();
@@ -303,7 +303,7 @@ pub fn default_acquire_timeout() -> Duration {
 #[derive(Debug)]
 struct NotifyOnce {
     tx: watch::Sender<bool>,
-    rx: watch::Receiver<bool>
+    rx: watch::Receiver<bool>,
 }
 
 impl Default for NotifyOnce {

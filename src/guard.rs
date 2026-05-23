@@ -14,7 +14,7 @@ pub struct GuardGroup(Arc<Inner>);
 #[derive(Debug)]
 struct Inner {
     count: AtomicUsize,
-    notify: Notify
+    notify: Notify,
 }
 
 impl GuardGroup {

@@ -12,7 +12,7 @@ use crate::state::SharedState;
 /// is observed immediately via the shared shutdown token.
 pub struct Runtime<S> {
     join_set: JoinSet<crate::registry::Result<()>>,
-    _state: PhantomData<fn() -> S>
+    _state: PhantomData<fn() -> S>,
 }
 
 impl<S> Default for Runtime<S> {
@@ -23,13 +23,13 @@ impl<S> Default for Runtime<S> {
 
 impl<S> Runtime<S>
 where
-    S: Clone + Send + 'static
+    S: Clone + Send + 'static,
 {
     /// Spawn all runnable providers from registry.
     pub fn spawn_all(
         &mut self,
         registry: &Registry<S>,
-        state: S
+        state: S,
     ) -> usize {
         registry.run_all(state, &mut self.join_set)
     }
@@ -37,7 +37,7 @@ where
 
 impl<S> Runtime<S>
 where
-    S: SharedState
+    S: SharedState,
 {
     /// Run until shutdown is initiated or a critical runnable failure occurs.
     ///
@@ -46,7 +46,7 @@ where
     /// - `Err(_)` on critical startup/join failures.
     pub async fn wait_until_shutdown(
         &mut self,
-        state: &S
+        state: &S,
     ) -> crate::registry::Result<()> {
         let shutdown = state.shutdown_token();
 

@@ -204,7 +204,8 @@ impl Gate {
             self.inner.count.fetch_add(1, Ordering::Relaxed);
         }
 
-        Ok(self.permit()) // Permit Drop impl does fetch_sub + released.notify_waiters()
+        // The slot was already counted above; construct the permit directly.
+        Ok(Permit { gate: self.clone() })
     }
 
     /// Wait until all permits are dropped, respecting the configured grace period.
@@ -339,5 +340,30 @@ impl NotifyOnce {
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Error, Gate};
+    use std::time::Duration;
+
+    #[test]
+    fn try_enter_counts_one_slot_per_permit() {
+        let gate = Gate::new(Some(2), Duration::from_millis(10));
+
+        let first = gate.try_enter().unwrap();
+        assert_eq!(gate.count(), 1);
+
+        let second = gate.try_enter().unwrap();
+        assert_eq!(gate.count(), 2);
+
+        assert!(matches!(gate.try_enter(), Err(Error::AtCapacity)));
+
+        drop(first);
+        assert_eq!(gate.count(), 1);
+
+        drop(second);
+        assert_eq!(gate.count(), 0);
     }
 }

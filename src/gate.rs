@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use tokio::sync::{Notify, watch};
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -161,14 +161,19 @@ impl Gate {
 
             let remaining = wait_timeout - elapsed;
 
-            // Wait until a connection is freed, with timeout
-            match timeout(remaining, self.inner.released.notified()).await {
-                Ok(_) => {
-                    // A connection was released, loop again to try acquiring
+            // Wait until a connection is freed, but let shutdown interrupt
+            // overload backpressure immediately.
+            tokio::select! {
+                biased;
+
+                _ = self.inner.graceful.notified() => {
+                    return Err(Error::ShuttingDown);
+                }
+                _ = self.inner.released.notified() => {
+                    // A connection was released, loop again to try acquiring.
                     continue;
                 }
-                Err(_) => {
-                    // Timeout elapsed
+                _ = sleep(remaining) => {
                     warn!(
                         "Connection acquire timeout after {:?}. Current: {}/{}",
                         wait_timeout,

@@ -1,12 +1,12 @@
 [package]
 name = "runtime-rs"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 authors = ["iadev09 <iadev09@claviron.org>"]
-description = "Typed service registry and Tokio lifecycle runtime for boot, reload, background tasks, and graceful shutdown."
+description = "Archived service lifecycle crate; development continues as continuo."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/iadev09/runtime-rs"
-readme = "README.md"
+homepage = "https://github.com/iadev09/continuo"
 keywords = ["tokio", "runtime", "lifecycle", "registry"]
 categories = ["asynchronous"]
 exclude = ["/.gitea/**", "/Cargo.lock", "/justfile", "/rustfmt.toml"]

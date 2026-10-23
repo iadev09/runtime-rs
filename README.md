@@ -1,5 +1,10 @@
 # runtime-rs
 
+> **Archived:** `runtime-rs` is no longer maintained. Development continues in
+> [Continuo](https://github.com/iadev09/continuo), published as
+> [`continuo` on crates.io](https://crates.io/crates/continuo).
+> Continuo has a different API; review its documentation before migrating.
+
 Tokio-native lifecycle and service composition for Rust applications.
 
 `runtime-rs` gives your app one place to register services, boot them,

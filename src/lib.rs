@@ -1,5 +1,8 @@
 //! # runtime-rs
 //!
+//! **Archived:** This crate is no longer maintained. Development continues in
+//! [`continuo`](https://crates.io/crates/continuo), which has a different API.
+//!
 //! Agnostic service composition primitives for multi-service Rust applications.
 //!
 //! No application state, no configuration, no HTTP, no TLS, no DB dependency.
